@@ -145,14 +145,12 @@ didFinishPickingMediaWithInfo:(NSDictionary<NSString *, id> *)info
   if (image) {
     height = @(image.size.height);
     width = @(image.size.width);
-  }
-  
-  if (isMovie) {
+  } else if (isMovie) {
     PHFetchResult<PHAsset *> *assets = [PHAsset fetchAssetsWithALAssetURLs:@[[info valueForKey:UIImagePickerControllerReferenceURL]] options:nil];
     if (assets.count > 0) {
       PHAsset *videoAsset = assets.firstObject;
-      width = @(videoAsset.pixelWidth);
       height = @(videoAsset.pixelHeight);
+      width = @(videoAsset.pixelWidth);
     }
   }
   
