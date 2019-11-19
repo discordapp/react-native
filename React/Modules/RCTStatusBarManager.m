@@ -144,6 +144,7 @@ RCT_EXPORT_METHOD(setStyle : (UIStatusBarStyle)statusBarStyle animated : (BOOL)a
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     [RCTSharedApplication() setStatusBarStyle:statusBarStyle animated:animated];
   }
+#pragma clang diagnostic pop
 }
 
 RCT_EXPORT_METHOD(setHidden : (BOOL)hidden withAnimation : (UIStatusBarAnimation)animation)
