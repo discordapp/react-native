@@ -10,11 +10,14 @@
 
 #import <MobileCoreServices/UTCoreTypes.h>
 #import <UIKit/UIKit.h>
+#import <Photos/Photos.h>
 
 #import <React/RCTConvert.h>
 #import <React/RCTImageStoreManager.h>
 #import <React/RCTRootView.h>
 #import <React/RCTUtils.h>
+
+@import Photos;
 
 @interface RCTImagePickerController : UIImagePickerController
 
@@ -96,7 +99,7 @@ RCT_EXPORT_METHOD(openCameraDialog:(NSDictionary *)config
   imagePicker.unmirrorFrontFacingCamera = [RCTConvert BOOL:config[@"unmirrorFrontFacingCamera"]];
 
   if ([RCTConvert BOOL:config[@"videoMode"]]) {
-    imagePicker.cameraCaptureMode = UIImagePickerControllerCameraCaptureModeVideo;
+    imagePicker.mediaTypes = @[(NSString *)kUTTypeImage, (NSString *)kUTTypeMovie];
   }
 
   [self _presentPicker:imagePicker
@@ -116,6 +119,11 @@ RCT_EXPORT_METHOD(openSelectDialog:(NSDictionary *)config
   UIImagePickerController *imagePicker = [UIImagePickerController new];
   imagePicker.delegate = self;
   imagePicker.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
+  
+  // Don't compress the video
+  if (@available(iOS 11.0, *)) {
+    imagePicker.videoExportPreset = AVAssetExportPresetPassthrough;
+  }
 
   NSMutableArray<NSString *> *allowedTypes = [NSMutableArray new];
   if ([RCTConvert BOOL:config[@"showImages"]]) {
@@ -155,15 +163,24 @@ didFinishPickingMediaWithInfo:(NSDictionary<NSString *, id> *)info
 {
   NSString *mediaType = info[UIImagePickerControllerMediaType];
   BOOL isMovie = [mediaType isEqualToString:(NSString *)kUTTypeMovie];
-  NSString *key = isMovie ? UIImagePickerControllerMediaURL : UIImagePickerControllerReferenceURL;
-  NSURL *imageURL = info[key];
+  NSURL *imageURL = info[UIImagePickerControllerReferenceURL] ?: info[UIImagePickerControllerMediaURL];
   UIImage *image = info[UIImagePickerControllerOriginalImage];
   NSNumber *width = 0;
   NSNumber *height = 0;
   if (image) {
     height = @(image.size.height);
     width = @(image.size.width);
+  } else if (isMovie && info[UIImagePickerControllerReferenceURL]) {
+    // these are movies picked from the image picker. videos taken from the camera roll are not saved yet and
+    // cannot be loaded with a width or height
+    PHFetchResult<PHAsset *> *assets = [PHAsset fetchAssetsWithALAssetURLs:@[[info valueForKey:UIImagePickerControllerReferenceURL]] options:nil];
+    if (assets.count > 0) {
+      PHAsset *videoAsset = assets.firstObject;
+      height = @(videoAsset.pixelHeight);
+      width = @(videoAsset.pixelWidth);
+    }
   }
+  
   if (imageURL) {
     NSString *imageURLString = imageURL.absoluteString;
     // In iOS 13, video URLs are only valid while info dictionary is retained
@@ -181,10 +198,18 @@ didFinishPickingMediaWithInfo:(NSDictionary<NSString *, id> *)info
   // We need to save it to the image store first.
   UIImage *originalImage = info[UIImagePickerControllerOriginalImage];
 
-  // WARNING: Using ImageStoreManager may cause a memory leak because the
-  // image isn't automatically removed from store once we're done using it.
-  [_bridge.imageStoreManager storeImage:originalImage withBlock:^(NSString *tempImageTag) {
-    [self _dismissPicker:picker args:tempImageTag ? @[tempImageTag, RCTNullIfNil(height), RCTNullIfNil(width)] : nil];
+  __block PHObjectPlaceholder *placeholderAsset = nil;
+  [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
+    PHAssetChangeRequest *assetChangeRequest = [PHAssetChangeRequest creationRequestForAssetFromImage:originalImage];
+    placeholderAsset = assetChangeRequest.placeholderForCreatedAsset;
+  } completionHandler:^(BOOL success, NSError *error) {
+    if (success) {
+      // probably a bit hacky...
+      NSString *id = [placeholderAsset.localIdentifier substringToIndex:36];
+      NSString *assetUrlString = [NSString stringWithFormat:@"assets-library://asset/asset.JPG?id=%@&ext=JPG", id];
+
+      [self _dismissPicker:picker args:@[assetUrlString, height, width]];
+    }
   }];
 }
 
@@ -228,7 +253,9 @@ didFinishPickingMediaWithInfo:(NSDictionary<NSString *, id> *)info
   [_pickerCancelCallbacks removeObjectAtIndex:index];
 
   UIViewController *rootViewController = RCTPresentedViewController();
-  [rootViewController dismissViewControllerAnimated:YES completion:nil];
+  dispatch_async(dispatch_get_main_queue(), ^{
+      [rootViewController dismissViewControllerAnimated:YES completion:nil];
+  });
 
   if (args) {
     successCallback(args);
